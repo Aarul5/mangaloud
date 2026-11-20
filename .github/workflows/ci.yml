@@ -1,0 +1,119 @@
+# Checks every pull request and every push to main: the app's unit tests and a debug build, and
+# a syntax check of the relay. Needs no secrets, so it also runs for pull requests from forks.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests and debug build
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleDebug --no-daemon
+
+      # A resource string over 32,767 characters is packed as "STRING_TOO_LARGE" and breaks
+      # whatever uses it (a long icon path once left the app with no icon).
+      - name: No oversized resource strings
+        run: |
+          if unzip -p android/app/build/outputs/apk/debug/app-debug.apk 'res/*' resources.arsc | grep -a -q STRING_TOO_LARGE; then
+            echo "::error::A resource string is too long for Android and was replaced by STRING_TOO_LARGE."
+            exit 1
+          fi
+
+      - name: Test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: android/app/build/reports/tests/
+          retention-days: 7
+
+  relay:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Syntax check
+        working-directory: relay
+        run: for f in *.mjs; do node --check "$f"; done
+
+      - name: Shell scripts
+        working-directory: relay
+        run: |
+          for f in *.sh; do bash -n "$f"; done
+          if command -v shellcheck > /dev/null; then shellcheck *.sh; fi
+          ./install-autostart.sh --dry-run
+
+      - name: The relay starts and checks its token
+        working-directory: relay
+        run: |
+          HOST=127.0.0.1 RELAY_TOKEN=ci-token node server.mjs > ci-relay.log 2>&1 &
+          for i in $(seq 1 20); do curl -fs http://127.0.0.1:8787/health && break; sleep 1; done
+          echo
+          curl -fs http://127.0.0.1:8787/health | grep -q '"ok":true'
+          code=$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8787/cast?series=x')
+          echo "Without the token: $code"
+          test "$code" = 401
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ci-token' 'http://127.0.0.1:8787/cast?series=x')
+          echo "With the token: $code"
+          test "$code" != 401
+          ls -l setup-link.txt
+          ls -l setup-link.txt | grep -q '^-rw-------'
+
+      # The installed service starts the relay, which stops at once with no Tailscale on the runner:
+      # that line in the log shows the service ran node in the right folder.
+      - name: Autostart installs, runs and uninstalls (Linux)
+        if: runner.os == 'Linux'
+        working-directory: relay
+        run: |
+          sudo loginctl enable-linger "$USER"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for i in $(seq 1 20); do systemctl --user is-system-running > /dev/null 2>&1 && break; [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done
+          ./install-autostart.sh
+          for i in $(seq 1 20); do grep -q 'Tailscale is not running' logs/relay.log 2>/dev/null && break; sleep 1; done
+          cat logs/relay.log
+          grep -q 'Tailscale is not running' logs/relay.log
+          ./uninstall-autostart.sh
+
+      - name: Autostart installs, runs and uninstalls (macOS)
+        if: runner.os == 'macOS'
+        working-directory: relay
+        run: |
+          ./install-autostart.sh
+          for i in $(seq 1 20); do grep -q 'Tailscale is not running' logs/relay.log 2>/dev/null && break; sleep 1; done
+          cat logs/relay.log
+          grep -q 'Tailscale is not running' logs/relay.log
+          ./uninstall-autostart.sh

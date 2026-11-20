@@ -1,0 +1,13 @@
+{
+  "name": "mangaloud-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Runs claude -p on comic image slices sent from the Manga Loud Android app",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

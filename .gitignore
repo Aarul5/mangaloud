@@ -1,0 +1,14 @@
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+relay/.token
+relay/setup-link.txt
+relay/logs/
+relay/voice-key*
+relay/fish-key*
+relay/voices/
+relay/cache/
+relay/debug/
+node_modules/

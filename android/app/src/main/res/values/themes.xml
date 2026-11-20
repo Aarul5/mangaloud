@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="window">#14141A</color>
+
+    <!-- The screens are drawn by Compose (Theme.kt); this only colours the window before they appear. -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window</item>
+        <item name="android:colorAccent">#FFB020</item>
+    </style>
+</resources>
