@@ -6,6 +6,12 @@ An Android browser for manga, manhwa and webtoon sites that reads the speech bub
 scrolls the page smoothly along with the voice. It has a built-in ad and pop-up blocker.
 
 <p align="center">
+  <img src="docs/screenshots/reading-shout.png" alt="Reading the demo chapter: a shout is highlighted and read aloud" width="250">
+  <img src="docs/screenshots/reading-game-window.png" alt="Reading a game window with a skill name in brackets" width="250">
+  <img src="docs/screenshots/reading-cough.png" alt="A cough is acted as a sound, then the words are read" width="250">
+</p>
+
+<p align="center">
   <img src="docs/screenshots/home.png" alt="Home screen" width="250">
   <img src="docs/screenshots/voice.png" alt="Voice settings: phone, Fish Audio, ElevenLabs, Gemini or a PC voice server" width="250">
   <img src="docs/screenshots/reading-settings.png" alt="Reading settings" width="250">
