@@ -11,6 +11,10 @@ scrolls the page smoothly along with the voice. It has a built-in ad and pop-up 
   <img src="docs/screenshots/reading-settings.png" alt="Reading settings" width="250">
 </p>
 
+**Try it:** open the [demo chapter](https://aarul5.github.io/mangaloud/demo/chapter-1/) in the app
+and press Read aloud. It's a short comic made for this project, with speech, a shout, a whisper,
+a thought, narration, a game window and a cough, so you can hear each kind of line.
+
 ## How it works
 
 1. You open a chapter in the app and tap **Read**.
