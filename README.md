@@ -1,5 +1,7 @@
 # Manga Loud
 
+<p align="center"><img src="docs/logo.webp" alt="Manga Loud logo: a manga character with headphones shouting the name in a comic burst" width="420"></p>
+
 An Android browser for manga, manhwa and webtoon sites that reads the speech bubbles aloud and
 scrolls the page smoothly along with the voice. It has a built-in ad and pop-up blocker.
 
@@ -8,10 +10,6 @@ scrolls the page smoothly along with the voice. It has a built-in ad and pop-up 
   <img src="docs/screenshots/voice.png" alt="Voice settings: phone, Fish Audio, ElevenLabs, Gemini or a PC voice server" width="250">
   <img src="docs/screenshots/reading-settings.png" alt="Reading settings" width="250">
 </p>
-
-**Try it:** open the [demo chapter](https://aarul5.github.io/mangaloud/demo/chapter-1/) in the app
-and press Read aloud. It's a short comic made for this project, with speech, a shout, a whisper,
-a thought, narration, a game window and a cough, so you can hear each kind of line.
 
 ## How it works
 
