@@ -24,6 +24,8 @@ class VoiceTextTest {
         assertEquals("[coughing] I'm fine.", VoiceText.fish(bubble("Cough! I'm fine.")))
         assertEquals("[screaming] Kyaa!", VoiceText.fish(bubble("Kyaa!", kind = TextKind.REACTION, sound = "shriek")))
         assertEquals("Agh!", VoiceText.fish(bubble("Agh!")))
+        assertEquals("Tsk", VoiceText.fish(bubble("Tsk")))
+        assertEquals("Hmph.", VoiceText.fish(bubble("Hmph.", "angry")))
         assertEquals("[quietly, to self] Strange...", VoiceText.fish(bubble("Strange...", kind = TextKind.THOUGHT)))
         assertEquals("[thoughtful] It's him!", VoiceText.fish(bubble("It's him!", "thinking", kind = TextKind.THOUGHT)))
     }
@@ -49,10 +51,22 @@ class VoiceTextTest {
         assertEquals(10.0, Wav.seconds(ByteArray(160_000), "mp3"), 0.01)
         // 24 kHz 16-bit mono: 48,000 bytes a second.
         assertEquals(2.0, Wav.seconds(Wav.fromPcm16(ByteArray(96_000), 24_000), "wav"), 0.01)
-        // A 22-character line gets about 10 seconds at normal speed, so 41 seconds is caught.
+        // A 22-character line gets under 6 seconds at normal speed, so 41 seconds is caught.
         val limit = Wav.limitSeconds("Attack Memorial Song!!", 1f)
-        assertTrue(limit in 9.0..11.0)
+        assertTrue(limit in 5.0..6.5)
         assertTrue(41.0 > limit)
+        // A short sound gets 4 seconds: a 7-second "Haa, haa" is a runaway.
+        assertEquals(4.0, Wav.limitSeconds("Haa, haa", 1.15f), 0.001)
+        // A long line still has room for a slow read.
+        assertTrue(Wav.limitSeconds("x".repeat(150), 1f) > 20.0)
+    }
+
+    @Test
+    fun onlySoundLines() {
+        assertTrue(VoiceText.isOnlySound(bubble("Haa, haa")))
+        assertTrue(VoiceText.isOnlySound(bubble("Kyaa!", kind = TextKind.REACTION, sound = "shriek")))
+        assertFalse(VoiceText.isOnlySound(bubble("Cough! I'm fine.")))
+        assertFalse(VoiceText.isOnlySound(bubble("Over here.")))
     }
 
     @Test

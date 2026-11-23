@@ -191,7 +191,7 @@
 
   // Glides to the place aim() gives. It is asked again on every frame: images still loading
   // above move the page during the glide, and a target worked out once would land off it.
-  function glide(aim) {
+  function glide(aim, minDuration) {
     cancelAnimationFrame(MR.anim);
     function target() {
       var maxY = document.documentElement.scrollHeight - window.innerHeight;
@@ -201,7 +201,7 @@
     var distance = target() - startY;
     // Long gaps (art-only panels) glide slower so the art can be seen on the way.
     var duration = Math.max(
-      350,
+      minDuration || 350,
       Math.min(3500, (Math.abs(distance) / window.innerHeight) * 1400),
     );
     var startTime = performance.now();
@@ -250,6 +250,12 @@
     var docTop = window.scrollY + rect.top;
     var top = docTop + c.y0 * rect.height;
     var bottom = docTop + c.y1 * rect.height;
+    // A bubble cut by the image's bottom edge goes on into the next image.
+    var next = MR.imgs[c.index + 1];
+    if (c.spill > 0 && next) {
+      var nextRect = next.getBoundingClientRect();
+      bottom = window.scrollY + nextRect.top + c.spill * nextRect.height;
+    }
     placeMarker(docLeft + c.x0 * rect.width, top, (c.x1 - c.x0) * rect.width, bottom - top);
     return { top: top, bottom: bottom };
   }
@@ -308,25 +314,47 @@
     );
   }
 
+  // An image still loading has only its placeholder's height, so where its bubbles sit is not
+  // known yet: a bubble in it looks "already on screen" and the page would not move to it.
+  function stillLoading(img) {
+    return !img.complete || img.naturalHeight < 4;
+  }
+
+  // How long to glide towards a bubble whose image is still loading. The glide aims again on
+  // every frame, so it lands on the bubble once the picture arrives, and the voice waits for it.
+  var LOADING_GLIDE_MS = 2500;
+
   // Highlights the bubble and scrolls to its panel (chapter positions panelFrom..panelTo).
   // Without a panel the bubble goes to the upper third of the screen. Returns the glide time in ms.
-  MR.show = function (index, x0, y0, x1, y1, panelFrom, panelTo) {
-    if (!MR.imgs[index]) return 0;
-    MR.current = { index: index, x0: x0, y0: y0, x1: x1, y1: y1 };
+  MR.show = function (index, x0, y0, x1, y1, panelFrom, panelTo, spill) {
+    var img = MR.imgs[index];
+    if (!img) return 0;
+    var loading = stillLoading(img);
+    if (loading) {
+      // Load it now, instead of when the page reaches it.
+      var lazy = lazySource(img);
+      img.loading = "eager";
+      if (lazy && img.src !== lazy) img.src = lazy;
+    }
+    MR.current = { index: index, x0: x0, y0: y0, x1: x1, y1: y1, spill: spill || 0 };
+    // Touching the image's bottom edge with no second half found: the rest of the bubble is
+    // probably at the top of the next image, so show some of it too.
+    var runsOn = !(spill > 0) && y1 >= 0.97 && !!MR.imgs[index + 1];
     placeCurrent();
     followCurrent();
     var hasPanel = typeof panelFrom === "number" && typeof panelTo === "number";
     function aim(force) {
       var bubble = placeCurrent();
       if (!bubble) return window.scrollY;
+      var bottom = runsOn ? bubble.bottom + window.innerHeight * 0.18 : bubble.bottom;
       return hasPanel
-        ? framePanel(docY(panelFrom), docY(panelTo), bubble.top, bubble.bottom, force)
+        ? framePanel(docY(panelFrom), docY(panelTo), bubble.top, bottom, force)
         : bubble.top - window.innerHeight * 0.28;
     }
-    if (aim(false) === null) return 0;
+    if (!loading && aim(false) === null) return 0;
     return glide(function () {
       return aim(true);
-    });
+    }, loading ? LOADING_GLIDE_MS : 0);
   };
 
   // Shows a panel with no bubbles. One taller than the screen is shown in parts, top down.

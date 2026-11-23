@@ -14,8 +14,8 @@ typealias ChapterPos = Double
  */
 class Entry(val key: Long, val bubble: Bubble, val sliceTop: Double, val sliceBottom: Double) {
     val top: ChapterPos get() = bubble.imageIndex + bubble.y0
-    val centre: ChapterPos get() = bubble.imageIndex + (bubble.y0 + bubble.y1) / 2
-    val bottom: ChapterPos get() = bubble.imageIndex + bubble.y1
+    val bottom: ChapterPos get() = if (bubble.spill > 0) bubble.imageIndex + 1 + bubble.spill else bubble.imageIndex + bubble.y1
+    val centre: ChapterPos get() = (top + bottom) / 2
     val sliceIndex: Int get() = ((key / 1_000L) % 1_000L).toInt()
 
     companion object {
@@ -25,18 +25,21 @@ class Entry(val key: Long, val bubble: Bubble, val sliceTop: Double, val sliceBo
 }
 
 /**
- * Spots one bubble read from both sides of a slice cut. A bubble on the cut has a box that stops
- * at the slice edge, so the centre rule in [Slice] can let both slices keep it. The OCR boxes are
- * too rough near the edge to tell from position alone, so this also compares the text: one copy
- * is usually the whole line and the other a piece of it.
+ * Spots one bubble read from both sides of a cut. A bubble on a slice cut has a box that stops at
+ * the slice edge, so the centre rule in [Slice] can let both slices keep it. A bubble on the cut
+ * between two images (its top at the bottom of one picture, the rest at the top of the next) is
+ * read once from each image. The OCR boxes are too rough near an edge to tell from position
+ * alone, so this also compares the text: one copy is usually the whole line and the other a piece.
  */
 object SeamTwins {
     private const val MIN_SHARED = 0.6
     private const val MIN_CHARS_FOR_PARTIAL = 8
+    /** How close to an image's top or bottom edge a box must reach to count as cut by it. */
+    private const val IMAGE_EDGE = 0.04
     private val notWord = Regex("""[^\p{L}\p{N}]+""")
 
     fun same(a: Entry, b: Entry): Boolean {
-        if (a.bubble.imageIndex != b.bubble.imageIndex) return false
+        if (a.bubble.imageIndex != b.bubble.imageIndex) return acrossImages(a.bubble, b.bubble)
         val (upper, lower) = if (a.sliceIndex < b.sliceIndex) a to b else b to a
         if (lower.sliceIndex - upper.sliceIndex != 1) return false
         if (!nearSeam(a, lower.sliceTop, upper.sliceBottom) || !nearSeam(b, lower.sliceTop, upper.sliceBottom)) return false
@@ -44,6 +47,17 @@ object SeamTwins {
         val narrower = minOf(a.bubble.x1 - a.bubble.x0, b.bubble.x1 - b.bubble.x0)
         if (narrower <= 0 || overlapX < narrower / 2) return false
         return sameText(normal(a.bubble.text), normal(b.bubble.text))
+    }
+
+    /** One bubble cut by the edge between two images: at the bottom of one, the top of the next. */
+    private fun acrossImages(a: Bubble, b: Bubble): Boolean {
+        val (upper, lower) = if (a.imageIndex < b.imageIndex) a to b else b to a
+        if (lower.imageIndex - upper.imageIndex != 1) return false
+        if (upper.y1 < 1 - IMAGE_EDGE || lower.y0 > IMAGE_EDGE) return false
+        val overlapX = minOf(a.x1, b.x1) - maxOf(a.x0, b.x0)
+        val narrower = minOf(a.x1 - a.x0, b.x1 - b.x0)
+        if (narrower <= 0 || overlapX < narrower / 2) return false
+        return sameText(normal(a.text), normal(b.text))
     }
 
     /** The copy to keep: the one with more of the line. */
@@ -62,11 +76,23 @@ object SeamTwins {
             kept.speaker != VoiceStyle.UNKNOWN -> kept.speaker
             else -> other.speaker
         }
-        return kept.copy(
+        val joined = kept.copy(
             character = character,
             speaker = speaker,
             look = kept.look.ifEmpty { other.look },
             sound = kept.sound.ifEmpty { other.sound },
+        )
+        if (a.bubble.imageIndex == b.bubble.imageIndex) return joined
+        // Cut by the edge between two images: one bubble from the upper half's top to how far
+        // it runs into the next image, so the page frames and highlights all of it.
+        val (upper, lower) = if (a.bubble.imageIndex < b.bubble.imageIndex) a.bubble to b.bubble else b.bubble to a.bubble
+        return joined.copy(
+            imageIndex = upper.imageIndex,
+            x0 = minOf(upper.x0, lower.x0),
+            y0 = upper.y0,
+            x1 = maxOf(upper.x1, lower.x1),
+            y1 = upper.y1,
+            spill = lower.y1,
         )
     }
 

@@ -30,6 +30,32 @@ class SeamTwinsTest {
     }
 
     @Test
+    fun bubbleCutBetweenTwoImagesIsOneBubble() {
+        val whole = "In that case, I have no real reason to refuse. I'm going to allow you to enter the dungeon."
+        // Image 4 ends with the bubble's top; image 5 starts with its last line.
+        val upper = Entry(4_000_000L + 3_000L, Bubble(4, whole, 0.1, 0.9, 0.62, 1.0, speaker = "woman"), 0.7, 1.0)
+        val lower = Entry(5_000_000L, Bubble(5, "the dungeon.", 0.12, 0.0, 0.6, 0.05), 0.0, 0.3)
+        val store = ChapterStore()
+        store.add(listOf(upper, lower), 4.7, 5.3)
+        val only = store.firstAfter(-1L)!!
+        assertEquals(whole, only.bubble.text)
+        assertEquals("woman", only.bubble.speaker)
+        assertEquals(4, only.bubble.imageIndex)
+        assertEquals(0.05, only.bubble.spill, 1e-9)
+        assertEquals(5.05, only.bottom, 1e-9)
+        assertEquals(null, store.firstAfter(only.key))
+    }
+
+    @Test
+    fun bubblesAtTwoImageEdgesWithOtherTextStayApart() {
+        val upper = Entry(4_003_000L, Bubble(4, "We must leave now.", 0.1, 0.9, 0.6, 1.0), 0.7, 1.0)
+        val lower = Entry(5_000_000L, Bubble(5, "Where is everyone?", 0.12, 0.0, 0.6, 0.05), 0.0, 0.3)
+        val store = ChapterStore()
+        store.add(listOf(upper, lower), 4.7, 5.3)
+        assertEquals("Where is everyone?", store.firstAfter(store.firstAfter(-1L)!!.key)?.bubble?.text)
+    }
+
+    @Test
     fun cutBubbleIsReadOnceWithTheWholeLine() {
         val whole = "Dexterity isn't the only important stat. I need to have high strength and stamina as well!"
         val texts = read(

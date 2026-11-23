@@ -10,6 +10,9 @@ Thanks for helping. Bug reports, fixes, new voice providers and translations are
 
 ## The parts of the project
 
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) walks through what happens when you press Read and
+which file does what. Start there.
+
 | Folder | What it is | Built with |
 |---|---|---|
 | `android/` | The Android app: browser, reader, read-aloud, settings | Kotlin, Jetpack Compose, Material 3 |
@@ -26,6 +29,8 @@ cd android
 ```
 
 The APK lands in `android/app/build/outputs/apk/debug/`. Pull requests run the same command in CI.
+A debug build installs as "Manga Loud dev", next to the released app rather than over it, so you
+can test a change without losing your settings.
 
 ## Run the relay
 
@@ -35,6 +40,21 @@ node server.mjs
 ```
 
 See the README for setting up the token and connecting the phone.
+
+## Translations
+
+On-screen text lives in `android/app/src/main/res/values/strings.xml`. To translate the app,
+copy that file to `values-xx/strings.xml` (for example `values-es` for Spanish) and translate
+the text between the tags. Keep placeholders such as `%1$s` and `%1$d` as they are.
+
+Some screens still have their text written in the code. Moving it is a good first contribution.
+Home and the browser bar show how:
+
+- Add the text to `strings.xml` with a short, lower-case name: `<string name="bookmarks">Bookmarks</string>`.
+- In a Compose screen, use `stringResource(R.string.bookmarks)` in place of `"Bookmarks"`.
+- For text with a value in it, write `%1$s` (text) or `%1$d` (a number) in `strings.xml`, and
+  pass the value: `stringResource(R.string.next_chapter_in, seconds)`.
+- Outside Compose (messages from `ReadAloud`, for example), use `context.getString(...)`.
 
 ## Pull requests
 

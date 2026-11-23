@@ -4,23 +4,12 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.media.MediaPlayer
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.util.Log
-import android.widget.Toast
-import java.io.File
-import java.io.IOException
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
@@ -31,6 +20,9 @@ import kotlin.concurrent.thread
  * Everything read is kept in a [ChapterStore] for the whole read. Scrolling by hand only moves
  * the reading position: a stretch already read is spoken straight away, and the worker is sent
  * to a stretch that is not, so nothing is downloaded or sent to Claude twice.
+ *
+ * Reading the text from images is [TextReader]'s job, and saying each line is [Speaker]'s; this
+ * class decides what to read and say, and when.
  */
 class ReadAloud(
     private val context: Context,
@@ -128,48 +120,19 @@ class ReadAloud(
     @Volatile
     private var earlyRun = 0
 
-    /**
-     * Slices a request is reading right now, by [OcrCache.keyOf]. Another request that wants one
-     * of them waits for that answer instead of paying for the same slice twice: pressing Read
-     * while the page-open read is still going, say.
-     */
-    private val readingNow = ConcurrentHashMap<String, CompletableFuture<Unit>>()
+    private val textReader = TextReader(context, settings)
 
-    /** The last batch's model and time, passed on with each status for the screen to show. */
-    @Volatile
-    private var readingDetails: String? = null
-
-    private fun status(text: String) {
-        listener.onStatus(text)
-        listener.onDetails(readingDetails)
+    private fun status(message: String) {
+        listener.onStatus(message)
+        val details = listOfNotNull(textReader.lastDetails, speaker.details).joinToString(" · ")
+        listener.onDetails(details.ifEmpty { null })
     }
 
-    // A cloud or PC voice: null when the phone's own voice reads.
-    private var clipVoice: ClipVoice? = null
-    private var player: MediaPlayer? = null
-    private var voiceProblemShown = false
-
-    /** When the chosen voice fails, the phone voice reads; off stops reading instead. */
-    private var fallbackToPhone = true
-
-    private var ttsReady = false
-    private val tts: TextToSpeech = TextToSpeech(context) { status ->
-        ttsReady = status == TextToSpeech.SUCCESS
-        if (!ttsReady) listener.onStatus("Text-to-speech is not available on this phone")
-    }
-
-    init {
-        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String) {}
-            override fun onDone(utteranceId: String) = main.post { onUtteranceFinished(utteranceId) }.let {}
-            @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String) = main.post { onUtteranceFinished(utteranceId) }.let {}
-        })
-    }
+    private val speaker = Speaker(context, settings, main, onFinished = ::onUtteranceFinished, onUnavailable = { listener.onStatus(it) })
 
     fun start(pageUrl: String, userAgent: String) {
         stop()
-        if (!ttsReady) {
+        if (!speaker.isReady) {
             listener.onStatus("Voice engine is still starting. Try again in a moment.")
             return
         }
@@ -180,18 +143,9 @@ class ReadAloud(
             return
         }
         val cast = SeriesCast(context, SeriesCast.seriesKeyOf(pageUrl))
-        voiceProblemShown = false
-        fallbackToPhone = VoiceSetup(context).fallbackToPhone
-        clipVoice = try {
-            createVoice(cast.seriesKey)
-        } catch (e: IllegalArgumentException) {
-            if (!fallbackToPhone) {
-                listener.onStatus(e.message ?: "Check Settings")
-                return
-            }
-            // No key or no relay: read with the phone voice, and say why.
-            showVoiceProblem(e.message ?: "The chosen voice is not set up, so the phone voice reads")
-            null
+        speaker.prepare(cast.seriesKey)?.let { reason ->
+            listener.onStatus(reason)
+            return
         }
         val run = session
         state = State.PREPARING
@@ -229,7 +183,7 @@ class ReadAloud(
         val early = earlyRun
         page.collectChapter { chapter ->
             if (early != earlyRun || state != State.IDLE) return@collectChapter
-            val isChapter = chapter.images.size >= MIN_NEXT_IMAGES &&
+            val isChapter = chapter.images.size >= TextReader.MIN_NEXT_IMAGES &&
                 (chapter.next != null || SeriesCast.looksLikeChapter(pageUrl))
             if (isChapter) start(pageUrl, userAgent) else onNotChapter()
         }
@@ -249,7 +203,7 @@ class ReadAloud(
         val early = earlyRun
         page.collectChapter { chapter ->
             if (early != earlyRun || state != State.IDLE) return@collectChapter
-            if (chapter.images.size < MIN_NEXT_IMAGES) return@collectChapter
+            if (chapter.images.size < TextReader.MIN_NEXT_IMAGES) return@collectChapter
             if (chapter.next == null && !SeriesCast.looksLikeChapter(pageUrl)) return@collectChapter
             val cast = SeriesCast(context, SeriesCast.seriesKeyOf(pageUrl))
             val sources = chapter.images.drop(chapter.startIndex).map { it.src }
@@ -257,7 +211,7 @@ class ReadAloud(
             val batchSlices = settings.batchSlices
             thread(name = "read-on-open", isDaemon = true) {
                 try {
-                    val read = readStart(early, sources, pageUrl, userAgent, provider, rightToLeft, cast, batchSlices, OPEN_SLICES)
+                    val read = textReader.readStart(sources, pageUrl, userAgent, provider, rightToLeft, cast, batchSlices, OPEN_SLICES) { early == earlyRun }
                     Log.d(TAG, "Page open: read $read slices early from $pageUrl")
                 } catch (e: InterruptedException) {
                     // App closing.
@@ -327,33 +281,8 @@ class ReadAloud(
         }
     }
 
-    /** The voice chosen for this series: a cloud voice, the PC, or null for the phone's own. */
-    private fun createVoice(series: String): ClipVoice? {
-        val setup = VoiceSetup(context)
-        val provider = setup.providerFor(series)
-        CloudTts.of(provider)?.let { return CloudVoice(context, it, setup, series, settings.speechRate) }
-        if (provider != VoiceProviderId.PC) return null
-        val engine = settings.voiceEngine.takeIf { it != VoiceEngine.PHONE } ?: VoiceEngine.PC_NORMAL
-        require(settings.relayUrl.isNotBlank() && settings.relayToken.isNotBlank()) {
-            "The PC voice needs a PC relay. Add its address and token in Settings, or choose the phone voice."
-        }
-        require(settings.allowPlainWifiRelay || RelayOcr.isEncryptedRoute(settings.relayUrl)) {
-            "The relay address is not a Tailscale address, so the token would go over Wi-Fi unencrypted. " +
-                "Use the 100.x address, or allow plain Wi-Fi in Settings."
-        }
-        return PcVoice(context, settings.relayUrl, settings.relayToken, engine.quality, settings.speechRate, settings.pcVoiceModel.id, series)
-    }
-
     /** Silences whichever voice is talking. */
-    private fun stopSpeaking() {
-        tts.stop()
-        releasePlayer()
-    }
-
-    private fun releasePlayer() {
-        player?.release()
-        player = null
-    }
+    private fun stopSpeaking() = speaker.silence()
 
     fun pause() {
         if (state != State.READING) return
@@ -390,11 +319,10 @@ class ReadAloud(
     fun stop() {
         session++
         earlyRun++
-        readingDetails = null
+        textReader.lastDetails = null
         currentUtterance = null
         stopSpeaking()
-        clipVoice?.close()
-        clipVoice = null
+        speaker.endRead()
         store.clear()
         panels.clear()
         dropArtStops()
@@ -417,7 +345,7 @@ class ReadAloud(
 
     fun shutdown() {
         stop()
-        tts.shutdown()
+        speaker.shutdown()
     }
 
     // Manual scrolling: the finger stops the glide, and once the page settles somewhere the
@@ -529,7 +457,7 @@ class ReadAloud(
             }
             if (run != session) return
             store.add(entries, job.from, job.to)
-            remember(recent, entries.map { it.bubble })
+            TextReader.remember(recent, entries.map { it.bubble })
             main.post { onStoreChanged(run) }
         }
 
@@ -554,7 +482,7 @@ class ReadAloud(
                     nextChapterStarted = true
                     val early = earlyRun
                     thread(name = "next-chapter", isDaemon = true) {
-                        readNextChapterEarly(early, nextUrl, images, provider, rightToLeft, pageUrl, userAgent, cast, batchSlices)
+                        textReader.readNextChapterEarly(nextUrl, images, provider, rightToLeft, pageUrl, userAgent, cast, batchSlices) { early == earlyRun }
                     }
                 }
                 if (atEnd || bubblesAhead.get() > MAX_BUBBLES_AHEAD) {
@@ -573,7 +501,7 @@ class ReadAloud(
                     if (imageIndex != slicedIndex) {
                         val image = images[imageIndex]
                         slices = try {
-                            val bytes = fetchImage(image.src, pageUrl, userAgent)
+                            val bytes = textReader.fetchImage(image.src, pageUrl, userAgent)
                             failedRun.clear()
                             try {
                                 val gutters = PanelFinder.gutters(bytes)
@@ -613,7 +541,7 @@ class ReadAloud(
                     // Read what came before the broken stretch, then stop and say why.
                     if (batch.isNotEmpty() && to > next) {
                         val before = recent.toList()
-                        inFlight.addLast(InFlight(pool.submit<List<Entry>> { recognize(batch, provider, cache, rightToLeft, cast, before) }, from, to))
+                        inFlight.addLast(InFlight(pool.submit<List<Entry>> { textReader.recognize(batch, provider, cache, rightToLeft, cast, before) }, from, to))
                     }
                     while (inFlight.isNotEmpty()) finishOldest()
                     throw ImagesNotLoaded("Stopped at image ${failedRun.first() + 1}: ${imageList(failedRun)} would not load ($failedReason). Scroll past them and press Read to go on.")
@@ -625,7 +553,7 @@ class ReadAloud(
                 }
                 val before = recent.toList()
                 val result = pool.submit<List<Entry>> {
-                    if (batch.isEmpty()) emptyList() else recognize(batch, provider, cache, rightToLeft, cast, before)
+                    if (batch.isEmpty()) emptyList() else textReader.recognize(batch, provider, cache, rightToLeft, cast, before)
                 }
                 inFlight.addLast(InFlight(result, from, to))
                 next = to
@@ -651,145 +579,6 @@ class ReadAloud(
 
     private fun ownedBottom(slice: Slice) = minOf(slice.ownBottomFrac, 1.0)
 
-    /**
-     * Reads the start of the next chapter into the text cache, so pressing Read there starts
-     * at once. Runs once this chapter's text is all read, stops after [EARLY_SLICES] slices to
-     * spare the plan if the reader stops here, and stops when reading is stopped. A site that
-     * adds its images by script gives no image list, and nothing is read.
-     */
-    private fun readNextChapterEarly(
-        early: Int,
-        nextUrl: String,
-        images: List<PageImage>,
-        provider: OcrProvider,
-        rightToLeft: Boolean,
-        pageUrl: String,
-        userAgent: String,
-        cast: SeriesCast,
-        batchSlices: Int,
-    ) {
-        try {
-            val host = NextChapter.hostOf(images) ?: return
-            val sources = NextChapter.imagesOf(NextChapter.fetchHtml(nextUrl, pageUrl, userAgent), nextUrl, host)
-            if (sources.size < MIN_NEXT_IMAGES) {
-                Log.d(TAG, "Next chapter: ${sources.size} images found in its page, not reading it early")
-                return
-            }
-            val nextKey = SeriesCast.seriesKeyOf(nextUrl)
-            val nextCast = if (nextKey == cast.seriesKey) cast else SeriesCast(context, nextKey)
-            val read = readStart(early, sources, nextUrl, userAgent, provider, rightToLeft, nextCast, batchSlices, EARLY_SLICES)
-            Log.d(TAG, "Next chapter: read $read slices early from $nextUrl")
-        } catch (e: InterruptedException) {
-            // App closing.
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not read the next chapter early: ${e.message}")
-        }
-    }
-
-    /**
-     * Reads the text of the first [limit] slices of a chapter's images into the text cache,
-     * skipping slices read before. Stops when [earlyRun] moves on. Returns the slices read.
-     */
-    private fun readStart(
-        early: Int,
-        sources: List<String>,
-        referer: String,
-        userAgent: String,
-        provider: OcrProvider,
-        rightToLeft: Boolean,
-        cast: SeriesCast,
-        batchSlices: Int,
-        limit: Int,
-    ): Int {
-        val cache = OcrCache(context)
-        val batch = mutableListOf<Slice>()
-        val recent = ArrayDeque<Bubble>()
-        var read = 0
-        fun send() {
-            if (batch.isEmpty() || early != earlyRun) return
-            val entries = recognize(batch.toList(), provider, cache, rightToLeft, cast, recent.toList())
-            remember(recent, entries.map { it.bubble })
-            read += batch.size
-            batch.clear()
-        }
-        for ((index, src) in sources.withIndex()) {
-            if (early != earlyRun || read >= limit) break
-            val slices = ImageSlicer.slice(fetchImage(src, referer, userAgent), index, src)
-            for (slice in slices) {
-                if (read + batch.size >= limit) break
-                if (cache.get(slice, rightToLeft) != null) continue
-                batch += slice
-                if (batch.size >= batchSlices) send()
-            }
-        }
-        send()
-        return read
-    }
-
-    /** Keeps the last [RECENT_LINES] bubbles, oldest first. */
-    private fun remember(recent: ArrayDeque<Bubble>, bubbles: List<Bubble>) {
-        recent.addAll(bubbles)
-        while (recent.size > RECENT_LINES) recent.removeFirst()
-    }
-
-    /** One line of what was just read, as Claude is shown it: who said it, and the words. */
-    private fun lineFor(bubble: Bubble): String = when {
-        bubble.speaker == VoiceStyle.NARRATOR -> "narration: \"${bubble.text}\""
-        bubble.character.isEmpty() -> "unknown speaker (${bubble.speaker}): \"${bubble.text}\""
-        else -> "${bubble.character} (${bubble.speaker}): \"${bubble.text}\""
-    }
-
-    private fun recognize(
-        slices: List<Slice>,
-        provider: OcrProvider,
-        cache: OcrCache,
-        rightToLeft: Boolean,
-        cast: SeriesCast,
-        before: List<Bubble>,
-    ): List<Entry> {
-        val keys = slices.map { cache.keyOf(it, rightToLeft) }
-        // Slices another request is reading now: wait for its answer rather than ask again.
-        for (i in slices.indices) {
-            if (cache.get(slices[i], rightToLeft) != null) continue
-            readingNow[keys[i]]?.let { runCatching { it.get(WAIT_FOR_OTHER_READ_S, TimeUnit.SECONDS) } }
-        }
-        val results = slices.map { cache.get(it, rightToLeft) }.toMutableList()
-        val missing = slices.indices.filter { results[it] == null }
-        val done = CompletableFuture<Unit>()
-        val claimed = missing.map { keys[it] }.filter { readingNow.putIfAbsent(it, done) == null }
-        if (missing.isNotEmpty()) try {
-            val batch = missing.map { slices[it] }
-            val ocrContext = OcrContext(cast.promptList(), before.map(::lineFor))
-            val started = SystemClock.elapsedRealtime()
-            val fresh = retryOnce { provider.recognize(batch, rightToLeft, ocrContext) }
-            val seconds = (SystemClock.elapsedRealtime() - started) / 1000.0
-            readingDetails = "Text: ${batch.size} in ${"%.1f".format(seconds)}s · ${provider.lastModel.ifBlank { "model unknown" }}"
-            missing.forEachIndexed { i, sliceIndex ->
-                results[sliceIndex] = fresh[i]
-                cache.put(slices[sliceIndex], rightToLeft, fresh[i])
-            }
-        } finally {
-            claimed.forEach { readingNow.remove(it, done) }
-            done.complete(Unit)
-        }
-        val bubbles = slices.mapIndexed { i, slice -> slice.toPageBubbles(results[i].orEmpty()) }
-        // Only fresh pages count towards who speaks most, so reading a chapter again changes nothing.
-        cast.record(missing.flatMap { bubbles[it] })
-        val readSystem = settings.readSystemBoxes
-        return slices.flatMapIndexed { i, slice ->
-            bubbles[i].mapIndexed { order, bubble ->
-                Entry(Entry.keyOf(slice, order), cast.settle(bubble), slice.topFrac, slice.bottomFrac)
-            }.filter { readSystem || it.bubble.kind != TextKind.SYSTEM }
-        }
-    }
-
-    private fun <T> retryOnce(block: () -> T): T = try {
-        block()
-    } catch (e: Exception) {
-        Log.w(TAG, "OCR batch failed, retrying once: ${e.message}")
-        block()
-    }
-
     // Main thread
 
     private fun onStoreChanged(run: Int) {
@@ -800,13 +589,13 @@ class ReadAloud(
 
     /** Asks the PC for the clips of the bubble being read and the next few, in reading order. */
     private fun prefetchClips() {
-        val voice = clipVoice ?: return
+        if (!speaker.usesClips) return
         var entry: Entry? = current
             ?: seekPos?.let { store.firstFrom(it) }
             ?: store.firstAfter(lastSpoken?.key ?: -1L)
         repeat(CLIPS_AHEAD + 1) {
             val e = entry ?: return
-            voice.prefetch(e.bubble)
+            speaker.prefetch(e.bubble)
             entry = store.firstAfter(e.key)
         }
     }
@@ -914,102 +703,17 @@ class ReadAloud(
                 if (run != session || state != State.READING || current !== entry) return@postDelayed
                 val id = "u${++utteranceCounter}"
                 currentUtterance = id
-                val voice = clipVoice
-                if (voice == null) {
-                    speakWithPhone(bubble, id)
-                } else {
-                    waitForClip(voice, entry, run, id, SystemClock.uptimeMillis() + CLIP_WAIT_MS)
+                speaker.say(bubble, id, stillWanted = { isSpeaking(entry, run, id) }) { reason ->
+                    // The voice failed and the phone voice may not fill in: stop and say why.
+                    failure = reason
+                    finish()
                 }
             }, (glideMs * 0.6).toLong())
         }
     }
 
-    private fun speakWithPhone(bubble: Bubble, id: String) {
-        // The phone voice would say "cough" or "sigh" as a word: leave a beat instead.
-        if (bubble.kind == TextKind.REACTION && bubble.sound in TextKind.UNSPOKEN_SOUNDS) {
-            main.postDelayed({ onUtteranceFinished(id) }, REACTION_PAUSE_MS)
-            return
-        }
-        val style = VoiceStyle.styleFor(bubble, settings.speechRate, settings.expressiveVoice)
-        tts.setPitch(style.pitch)
-        tts.setSpeechRate(style.rate)
-        val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, style.volume) }
-        tts.speak(SpeechText.forSpeech(bubble.text), TextToSpeech.QUEUE_FLUSH, params, id)
-    }
-
     private fun isSpeaking(entry: Entry, run: Int, id: String) =
         run == session && state == State.READING && current === entry && currentUtterance == id
-
-    /** Plays the clip once it arrives. A clip that fails, or is too slow, uses the phone voice (if allowed). */
-    private fun waitForClip(voice: ClipVoice, entry: Entry, run: Int, id: String, deadline: Long) {
-        if (!isSpeaking(entry, run, id)) return
-        if (voice.isUnreachable) {
-            voiceFailed("Can't reach ${voice.name}", entry, id)
-            return
-        }
-        val clip = try {
-            voice.clipOrNull(entry.bubble)
-        } catch (e: Exception) {
-            val reason = (e.cause ?: e).message ?: e.javaClass.simpleName
-            Log.w(TAG, "${voice.name} failed: $reason")
-            voiceFailed("${voice.name} failed: $reason", entry, id)
-            return
-        }
-        when {
-            clip != null -> play(clip, entry.bubble, id)
-            // Without the phone voice to fill in, a slow line is waited for.
-            SystemClock.uptimeMillis() >= deadline && fallbackToPhone -> {
-                showVoiceProblem("${voice.name} is slow, so the phone voice reads some lines")
-                speakWithPhone(entry.bubble, id)
-            }
-            else -> main.postDelayed({ waitForClip(voice, entry, run, id, deadline) }, CLIP_POLL_MS)
-        }
-    }
-
-    /** The phone voice reads the line, or reading stops with the reason when that is turned off. */
-    private fun voiceFailed(reason: String, entry: Entry, id: String) {
-        if (fallbackToPhone) {
-            showVoiceProblem("$reason. The phone voice reads for now.")
-            speakWithPhone(entry.bubble, id)
-            return
-        }
-        failure = reason
-        finish()
-    }
-
-    private fun play(clip: File, bubble: Bubble, id: String) {
-        releasePlayer()
-        val mp = MediaPlayer()
-        player = mp
-        try {
-            mp.setDataSource(clip.path)
-            if (VoiceStyle.isQuietThought(bubble)) mp.setVolume(VoiceStyle.THOUGHT_VOLUME, VoiceStyle.THOUGHT_VOLUME)
-            mp.setOnCompletionListener {
-                if (player === mp) releasePlayer()
-                onUtteranceFinished(id)
-            }
-            mp.setOnErrorListener { _, what, extra ->
-                Log.w(TAG, "Clip playback failed: $what/$extra")
-                if (player === mp) releasePlayer()
-                if (currentUtterance == id) speakWithPhone(bubble, id)
-                true
-            }
-            mp.prepare()
-            mp.start()
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not play clip: ${e.message}")
-            if (player === mp) releasePlayer()
-            clip.delete()
-            speakWithPhone(bubble, id)
-        }
-    }
-
-    /** Says once per read why the phone voice is filling in, instead of switching silently. */
-    private fun showVoiceProblem(message: String) {
-        if (voiceProblemShown) return
-        voiceProblemShown = true
-        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-    }
 
     private fun onUtteranceFinished(utteranceId: String) {
         if (utteranceId != currentUtterance) return
@@ -1021,8 +725,7 @@ class ReadAloud(
 
     private fun finish() {
         session++ // Ends the worker.
-        clipVoice?.close()
-        clipVoice = null
+        speaker.endRead()
         page.clear()
         resumeWhenFree = false
         abandonFocus()
@@ -1042,22 +745,6 @@ class ReadAloud(
         else "images ${numbers.dropLast(1).joinToString(", ")} and ${numbers.last()}"
     }
 
-    /** Downloads an image, trying again after a pause: image hosts often drop a request in a burst. */
-    private fun fetchImage(src: String, pageUrl: String, userAgent: String): ByteArray {
-        var last: IOException? = null
-        for (attempt in 0 until IMAGE_TRIES) {
-            if (attempt > 0) Thread.sleep(IMAGE_RETRY_MS * attempt)
-            try {
-                val bytes = ImageFetcher.fetch(src, pageUrl, userAgent)
-                if (ImageSlicer.isImage(bytes)) return bytes
-                last = IOException("not a picture (${bytes.size} bytes)")
-            } catch (e: IOException) {
-                last = e
-            }
-        }
-        throw last ?: IOException("no tries")
-    }
-
     companion object {
         private const val TAG = "ReadAloud"
         /** Holds: the app is off screen, or a call or another app has the sound. */
@@ -1067,33 +754,16 @@ class ReadAloud(
         private const val FIRST_BATCH_SIZE = 2
         /** Page open: slices read before Read is pressed, about the first few screens. */
         private const val OPEN_SLICES = 8
-        /** How long a request waits for another one already reading the same slice. */
-        private const val WAIT_FOR_OTHER_READ_S = 90L
         /** Batches sent to the relay at once. The relay runs up to two claude calls together. */
         private const val PARALLEL_BATCHES = 2
-        /** Next chapter: slices read before it is opened, about the first few screens. */
-        private const val EARLY_SLICES = 16
-        /** Next chapter: fewer images than this in its page means the list is not the chapter. */
-        private const val MIN_NEXT_IMAGES = 3
         private const val MAX_BUBBLES_AHEAD = 25
-        /** Lines read just before a batch that Claude is shown, so conversations carry over. */
-        private const val RECENT_LINES = 6
         private const val PAUSE_BETWEEN_BUBBLES_MS = 250L
-
-        /** The beat left for a cough or sigh the phone voice cannot make. */
-        private const val REACTION_PAUSE_MS = 600L
         private const val SCROLL_SETTLE_MS = 700L
         private const val IDLE_POLL_MS = 250L
-        // Image downloads: tries per image, the pause before a retry (longer each time), and how
-        // many images in a row may fail before the read stops instead of passing them over.
-        private const val IMAGE_TRIES = 3
-        private const val IMAGE_RETRY_MS = 1_500L
+        /** Images in a row that may fail to load before the read stops instead of passing them over. */
         private const val MAX_FAILED_IMAGES_IN_A_ROW = 2
 
         /** PC voice: clips asked for beyond the bubble being read. */
-        private const val CLIPS_AHEAD = 4
-        /** PC voice: how long a bubble waits for its clip before the phone voice reads it. */
-        private const val CLIP_WAIT_MS = 8_000L
-        private const val CLIP_POLL_MS = 100L
+        private const val CLIPS_AHEAD = 6
     }
 }

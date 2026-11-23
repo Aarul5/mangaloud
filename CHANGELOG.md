@@ -4,6 +4,35 @@ All notable changes to Manga Loud. Versions follow [Semantic Versioning](https:/
 
 ## Unreleased
 
+## 0.1.1
+
+### Fixed
+
+- A bubble whose picture was still loading was read before it came into view. The page now
+  loads that picture and waits for it, so you see each bubble as it is read.
+- A bubble cut between two images (its top at the bottom of one picture, its end at the top of
+  the next) was only half highlighted, and read while most of it was off screen. It is now read
+  as one bubble, highlighted whole, and the page scrolls to show all of it.
+- Fish Audio sometimes ran on with noise on short sound lines ("Tsk", "Haa, haa"). Grunts are
+  now read plainly, sound-only lines are read more steadily, and a clip that runs past its line
+  is stopped early and made again with just the words.
+- The phone voice often filled in for Fish Audio: a runaway clip held up the lines after it.
+  Clips are now stopped as soon as they run on, and made further ahead (three at a time, six
+  lines ahead).
+
+### Added
+
+- The small details line under the reading bar shows how long the last voice clip took
+  ("Voice: 1.4s"), to see when a voice service is slow.
+- Test builds install as "Manga Loud dev", next to the released app instead of over it.
+
+### For contributors
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): what happens when you press Read, and which file
+  does what. The reading code is split into `ReadAloud`, `TextReader` and `Speaker`.
+- Home and the browser bar take their text from `strings.xml`; CONTRIBUTING explains how to move
+  the rest and how to translate the app.
+
 ## 0.1.0
 
 The first public release.

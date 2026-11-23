@@ -54,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -92,17 +93,17 @@ fun HomeScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         LogoMark()
                         Spacer(Modifier.width(10.dp))
-                        Text(if (tab == HomeTab.HOME) appName() else "History")
+                        Text(if (tab == HomeTab.HOME) appName() else stringResource(R.string.history))
                     }
                 },
                 actions = {
                     if (tab == HomeTab.HISTORY && history.isNotEmpty()) {
                         IconButton(onClick = actions::clearHistory) {
-                            Icon(Icons.Outlined.DeleteSweep, contentDescription = "Clear history")
+                            Icon(Icons.Outlined.DeleteSweep, contentDescription = stringResource(R.string.clear_history))
                         }
                     }
                     IconButton(onClick = actions::openSettings) {
-                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                        Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.settings))
                     }
                 },
             )
@@ -113,13 +114,13 @@ fun HomeScreen(
                     selected = tab == HomeTab.HOME,
                     onClick = { onTab(HomeTab.HOME) },
                     icon = { Icon(Icons.Outlined.Home, contentDescription = null) },
-                    label = { Text("Home") },
+                    label = { Text(stringResource(R.string.home)) },
                 )
                 NavigationBarItem(
                     selected = tab == HomeTab.HISTORY,
                     onClick = { onTab(HomeTab.HISTORY) },
                     icon = { Icon(Icons.Outlined.History, contentDescription = null) },
-                    label = { Text("History") },
+                    label = { Text(stringResource(R.string.history)) },
                 )
             }
         },
@@ -132,7 +133,7 @@ fun HomeScreen(
 }
 
 @Composable
-private fun appName(): String = androidx.compose.ui.res.stringResource(R.string.app_name)
+private fun appName(): String = stringResource(R.string.app_name)
 
 @Composable
 private fun HomeTabContent(
@@ -149,14 +150,14 @@ private fun HomeTabContent(
         item {
             AddressField(
                 shown = "",
-                placeholder = "Search or type a site",
+                placeholder = stringResource(R.string.search_or_type_site),
                 onGo = actions::openTyped,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 height = 50.dp,
             )
         }
         if (continueItems.isNotEmpty()) {
-            item { SectionTitle("Continue reading", Modifier.padding(top = 12.dp)) }
+            item { SectionTitle(stringResource(R.string.continue_reading), Modifier.padding(top = 12.dp)) }
             item {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
@@ -166,13 +167,13 @@ private fun HomeTabContent(
                 }
             }
         }
-        item { SectionTitle("Bookmarks", Modifier.padding(top = 16.dp)) }
+        item { SectionTitle(stringResource(R.string.bookmarks), Modifier.padding(top = 16.dp)) }
         if (bookmarks.isEmpty()) {
             item {
                 EmptyNote(
                     icon = { Icon(Icons.Outlined.BookmarkBorder, contentDescription = null) },
-                    title = "Save your sites here",
-                    body = "Open a site, then tap the bookmark in the top bar.",
+                    title = stringResource(R.string.bookmarks_empty_title),
+                    body = stringResource(R.string.bookmarks_empty_body),
                 )
             }
         } else {
@@ -230,11 +231,11 @@ private fun ContinueCard(item: ContinueItem, library: Library, actions: HomeActi
             }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(text = { Text("Voices") }, onClick = {
+            DropdownMenuItem(text = { Text(stringResource(R.string.voices)) }, onClick = {
                 menu = false
                 actions.seriesVoices(item.url, item.series)
             })
-            DropdownMenuItem(text = { Text("Remove from history") }, onClick = {
+            DropdownMenuItem(text = { Text(stringResource(R.string.remove_from_history)) }, onClick = {
                 menu = false
                 actions.removeVisit(item.url)
             })
@@ -265,11 +266,11 @@ private fun BookmarkTile(bookmark: Bookmark, library: Library, actions: HomeActi
             }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(text = { Text("Rename") }, onClick = {
+            DropdownMenuItem(text = { Text(stringResource(R.string.rename)) }, onClick = {
                 menu = false
                 renaming = true
             })
-            DropdownMenuItem(text = { Text("Remove") }, onClick = {
+            DropdownMenuItem(text = { Text(stringResource(R.string.remove)) }, onClick = {
                 menu = false
                 actions.removeBookmark(bookmark.url)
             })
@@ -279,15 +280,15 @@ private fun BookmarkTile(bookmark: Bookmark, library: Library, actions: HomeActi
         var name by remember { mutableStateOf(Library.cleanTitle(bookmark.title)) }
         AlertDialog(
             onDismissRequest = { renaming = false },
-            title = { Text("Rename bookmark") },
+            title = { Text(stringResource(R.string.rename_bookmark)) },
             text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true) },
             confirmButton = {
                 TextButton(onClick = {
                     renaming = false
                     actions.renameBookmark(bookmark.url, name)
-                }) { Text("Save") }
+                }) { Text(stringResource(R.string.save)) }
             },
-            dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { renaming = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
@@ -298,8 +299,8 @@ private fun HistoryTabContent(padding: PaddingValues, library: Library, history:
         Box(Modifier.fillMaxSize().padding(padding)) {
             EmptyNote(
                 icon = { Icon(Icons.Outlined.History, contentDescription = null) },
-                title = "Pages you open show up here",
-                body = "Chapters you read also fill in Continue reading on Home.",
+                title = stringResource(R.string.history_empty_title),
+                body = stringResource(R.string.history_empty_body),
             )
         }
         return
@@ -319,7 +320,7 @@ private fun HistoryTabContent(padding: PaddingValues, library: Library, history:
                 },
                 trailingContent = {
                     IconButton(onClick = { actions.removeVisit(visit.url) }) {
-                        Icon(Icons.Outlined.Close, contentDescription = "Remove")
+                        Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.remove))
                     }
                 },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),

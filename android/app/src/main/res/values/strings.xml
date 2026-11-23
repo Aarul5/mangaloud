@@ -9,4 +9,43 @@
     <string name="skip">Skip</string>
     <string name="settings">Settings</string>
     <string name="go">Go</string>
+
+    <!-- Home and browser screens -->
+    <string name="history">History</string>
+    <string name="clear_history">Clear history</string>
+    <string name="home">Home</string>
+    <string name="search_or_type_site">Search or type a site</string>
+    <string name="continue_reading">Continue reading</string>
+    <string name="bookmarks">Bookmarks</string>
+    <string name="bookmarks_empty_title">Save your sites here</string>
+    <string name="bookmarks_empty_body">Open a site, then tap the bookmark in the top bar.</string>
+    <!-- Menu item: the voices of one series. -->
+    <string name="voices">Voices</string>
+    <string name="remove_from_history">Remove from history</string>
+    <string name="rename">Rename</string>
+    <string name="remove">Remove</string>
+    <string name="rename_bookmark">Rename bookmark</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="history_empty_title">Pages you open show up here</string>
+    <string name="history_empty_body">Chapters you read also fill in Continue reading on Home.</string>
+    <string name="remove_bookmark">Remove bookmark</string>
+    <string name="bookmark_this_page">Bookmark this page</string>
+    <string name="more">More</string>
+    <string name="back">Back</string>
+    <string name="reload">Reload</string>
+    <string name="share_link">Share link</string>
+    <string name="open_in_another_app">Open in another app</string>
+    <string name="voices_for_this_series">Voices for this series</string>
+    <string name="switch_relay">Switch relay</string>
+    <string name="open">Open</string>
+    <string name="read_this_chapter_aloud">Read this chapter aloud</string>
+    <string name="dismiss">Dismiss</string>
+    <string name="read_aloud">Read aloud</string>
+    <string name="go_now">Go now</string>
+    <string name="getting_ready">Getting ready…</string>
+    <!-- A site tried to send the reader to another site (%1$s), which was stopped. -->
+    <string name="blocked_jump">Blocked a jump to %1$s</string>
+    <!-- Countdown before the next chapter opens by itself; %1$d is seconds. -->
+    <string name="next_chapter_in">Next chapter in %1$d…</string>
 </resources>

@@ -72,6 +72,11 @@ data class Bubble(
     val kind: String = TextKind.DIALOGUE,
     /** For a reaction, the sound made, or blank. */
     val sound: String = "",
+    /**
+     * How far the bubble runs on into the next image, as a fraction of that image, when the
+     * image's bottom edge cuts it in two (see [SeamTwins]). 0 for a bubble inside one image.
+     */
+    val spill: Double = 0.0,
 )
 
 /**

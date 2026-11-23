@@ -34,7 +34,7 @@ class PageScript(private val webView: WebView) {
      */
     fun show(bubble: Bubble, panel: DoubleArray, callback: (Long) -> Unit) {
         val js = "window.__mr ? window.__mr.show(${bubble.imageIndex}, ${bubble.x0}, ${bubble.y0}, " +
-            "${bubble.x1}, ${bubble.y1}, ${panel[0]}, ${panel[1]}) : 0"
+            "${bubble.x1}, ${bubble.y1}, ${panel[0]}, ${panel[1]}, ${bubble.spill}) : 0"
         webView.evaluateJavascript(js) { raw -> callback(raw?.toDoubleOrNull()?.toLong() ?: 0L) }
     }
 

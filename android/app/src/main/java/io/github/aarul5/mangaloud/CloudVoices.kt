@@ -82,7 +82,16 @@ interface CloudTts {
     fun library(key: String, search: String): List<LibraryVoice>
 
     /** One line of speech, and the file extension of its audio. [steady] asks for a calmer, more predictable take. */
-    fun speak(key: String, model: String, voice: VoicePick, bubble: Bubble, speed: Float, steady: Boolean = false): Pair<ByteArray, String>
+    fun speak(
+        key: String,
+        model: String,
+        voice: VoicePick,
+        bubble: Bubble,
+        speed: Float,
+        steady: Boolean = false,
+        /** Stop the download once the clip is longer than this ([ClipTooLong]). */
+        maxSeconds: Double = Double.MAX_VALUE,
+    ): Pair<ByteArray, String>
 
     companion object {
         fun of(provider: VoiceProviderId): CloudTts? = when (provider) {
@@ -97,8 +106,19 @@ interface CloudTts {
 /** A cloud voice answered with an error, with the service's own reason. */
 class VoiceServiceException(val code: Int, message: String) : IOException(message)
 
+/** A clip that was still coming after it was already far longer than its line; stopped part way. */
+class ClipTooLong : IOException("The clip ran on far past the line")
+
 internal object Http {
-    fun call(url: String, method: String, headers: Map<String, String>, body: ByteArray? = null, readTimeoutMs: Int = 60_000): ByteArray {
+    /** [maxBytes] stops a download that is already bigger than the answer can sensibly be ([ClipTooLong]). */
+    fun call(
+        url: String,
+        method: String,
+        headers: Map<String, String>,
+        body: ByteArray? = null,
+        readTimeoutMs: Int = 60_000,
+        maxBytes: Long = Long.MAX_VALUE,
+    ): ByteArray {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.requestMethod = method
         connection.connectTimeout = 10_000
@@ -115,7 +135,17 @@ internal object Http {
                 val detail = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
                 throw VoiceServiceException(code, reason(code, detail))
             }
-            return connection.inputStream.use { it.readBytes() }
+            return connection.inputStream.use { input ->
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(16 * 1024)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    out.write(buffer, 0, n)
+                    if (out.size() > maxBytes) throw ClipTooLong()
+                }
+                out.toByteArray()
+            }
         } finally {
             connection.disconnect()
         }
@@ -191,19 +221,22 @@ object FishTts : CloudTts {
         }
     }
 
-    override fun speak(key: String, model: String, voice: VoicePick, bubble: Bubble, speed: Float, steady: Boolean): Pair<ByteArray, String> {
+    override fun speak(key: String, model: String, voice: VoicePick, bubble: Bubble, speed: Float, steady: Boolean, maxSeconds: Double): Pair<ByteArray, String> {
+        // A retry after a clip ran on sends only the words: cues in front of short lines are what
+        // set Fish off.
         val body = JSONObject()
-            .put("text", VoiceText.fish(bubble))
+            .put("text", if (steady) VoiceText.plainWords(bubble.text) else VoiceText.fish(bubble))
             .put("reference_id", voice.id)
             .put("format", "mp3")
             .put("mp3_bitrate", 128)
             .put("latency", "normal")
             .put("normalize", true)
             .put("prosody", JSONObject().put("speed", speed.coerceIn(0.5f, 2f).toDouble()).put("volume", 0))
-        // A lower temperature makes Fish less likely to wander off into noise again.
-        if (steady) body.put("temperature", 0.5)
+        // A lower temperature makes Fish less likely to wander off into noise. A line that is only
+        // a sound ("Haa, haa", "Kyaa!") is the likeliest to, so it is always read steadily.
+        if (steady || VoiceText.isOnlySound(bubble)) body.put("temperature", 0.5)
         val headers = auth(key) + mapOf("Content-Type" to "application/json", "model" to model)
-        return Http.call("https://api.fish.audio/v1/tts", "POST", headers, body.toString().toByteArray()) to "mp3"
+        return Http.call("https://api.fish.audio/v1/tts", "POST", headers, body.toString().toByteArray(), 30_000, mp3Bytes(maxSeconds)) to "mp3"
     }
 
     private val GENDERS = setOf("male", "female")
@@ -281,7 +314,7 @@ object ElevenLabsTts : CloudTts {
         }
     }
 
-    override fun speak(key: String, model: String, voice: VoicePick, bubble: Bubble, speed: Float, steady: Boolean): Pair<ByteArray, String> {
+    override fun speak(key: String, model: String, voice: VoicePick, bubble: Bubble, speed: Float, steady: Boolean, maxSeconds: Double): Pair<ByteArray, String> {
         val tags = !model.startsWith("eleven_flash") && !model.startsWith("eleven_multilingual")
         val body = JSONObject()
             .put("text", VoiceText.eleven(bubble, tags))
@@ -292,7 +325,7 @@ object ElevenLabsTts : CloudTts {
             )
         val url = "https://api.elevenlabs.io/v1/text-to-speech/${Http.enc(voice.id)}?output_format=mp3_44100_128"
         val headers = auth(key) + ("Content-Type" to "application/json")
-        return Http.call(url, "POST", headers, body.toString().toByteArray()) to "mp3"
+        return Http.call(url, "POST", headers, body.toString().toByteArray(), 30_000, mp3Bytes(maxSeconds)) to "mp3"
     }
 }
 
@@ -335,7 +368,7 @@ object GeminiTts : CloudTts {
             .map { (name, about, gender) -> LibraryVoice(name, name, about, gender, "", null) }
     }
 
-    override fun speak(key: String, model: String, voice: VoicePick, bubble: Bubble, speed: Float, steady: Boolean): Pair<ByteArray, String> {
+    override fun speak(key: String, model: String, voice: VoicePick, bubble: Bubble, speed: Float, steady: Boolean, maxSeconds: Double): Pair<ByteArray, String> {
         val styled = VoiceText.gemini(bubble)
         val pace = when {
             speed >= 1.3f -> "speaking quickly"
@@ -380,6 +413,10 @@ object GeminiTts : CloudTts {
     private fun isWav(bytes: ByteArray) = bytes.size > 12 && String(bytes, 0, 4) == "RIFF" && String(bytes, 8, 4) == "WAVE"
 }
 
+/** The most bytes a 128 kbit/s MP3 of [seconds] can take, with room for headers. */
+internal fun mp3Bytes(seconds: Double): Long =
+    if (seconds == Double.MAX_VALUE) Long.MAX_VALUE else (seconds * 16_000 + 32_000).toLong()
+
 /** A WAV header for raw 16-bit mono PCM, so the player can read it. */
 object Wav {
     /** Seconds of audio in a clip: from the WAV header, or from the size of a 128 kbit/s MP3. */
@@ -393,8 +430,13 @@ object Wav {
         return audio.size * 8.0 / 128_000
     }
 
-    /** The longest a line should take: about 14 characters a second, with room for a slow, dramatic read. */
-    fun limitSeconds(text: String, speed: Float): Double = 6 + 2.5 * text.length / (14 * speed.coerceAtLeast(0.5f))
+    /**
+     * The longest a line should take: about twice its length at a normal 14 characters a second,
+     * plus 2.5 seconds, and never under 4 seconds (a real laugh or sob takes a moment). "Haa, haa"
+     * gets 4 seconds, a 150-character line about 24. A clip past this is the voice stuck in a loop
+     * or making noise.
+     */
+    fun limitSeconds(text: String, speed: Float): Double = maxOf(4.0, 2.5 + text.length / (7 * speed.coerceAtLeast(0.5f)))
 
     fun fromPcm16(pcm: ByteArray, sampleRate: Int): ByteArray {
         val header = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)

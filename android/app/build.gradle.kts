@@ -42,7 +42,14 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Test builds install next to the released app instead of clashing with it (they are
+            // signed with a different key), and say "dev" under the icon.
+            applicationIdSuffix = ".dev"
+            manifestPlaceholders["appLabel"] = "Manga Loud dev"
+        }
         release {
+            manifestPlaceholders["appLabel"] = "@string/app_name"
             // Removes unused code and resources: most of the icon library goes.
             isMinifyEnabled = true
             isShrinkResources = true

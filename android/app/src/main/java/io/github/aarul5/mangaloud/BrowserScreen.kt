@@ -58,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -134,11 +135,11 @@ private fun TopBar(ui: UiState, bookmarked: Boolean, actions: BrowserActions) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = actions::home) {
-            Icon(Icons.Outlined.Home, contentDescription = "Home")
+            Icon(Icons.Outlined.Home, contentDescription = stringResource(R.string.home))
         }
         AddressField(
             shown = ui.url.removePrefix("https://").removePrefix("http://").removePrefix("www."),
-            placeholder = "Search or type a site",
+            placeholder = stringResource(R.string.search_or_type_site),
             onGo = actions::openTyped,
             modifier = Modifier.weight(1f),
             height = 42.dp,
@@ -146,23 +147,23 @@ private fun TopBar(ui: UiState, bookmarked: Boolean, actions: BrowserActions) {
         IconButton(onClick = actions::toggleBookmark) {
             Icon(
                 if (bookmarked) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
-                contentDescription = if (bookmarked) "Remove bookmark" else "Bookmark this page",
+                contentDescription = if (bookmarked) stringResource(R.string.remove_bookmark) else stringResource(R.string.bookmark_this_page),
                 tint = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
         }
         Box {
             IconButton(onClick = { menu = true }) {
-                Icon(Icons.Outlined.MoreVert, contentDescription = "More")
+                Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.more))
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 val close = { menu = false }
-                MenuItem("Back", Icons.AutoMirrored.Outlined.ArrowBack, close, actions::back)
-                MenuItem("Reload", Icons.Outlined.Refresh, close, actions::reload)
-                MenuItem("Share link", Icons.Outlined.Share, close, actions::share)
-                MenuItem("Open in another app", Icons.Outlined.OpenInBrowser, close, actions::openInOtherApp)
-                MenuItem("Voices for this series", Icons.Outlined.Groups, close, actions::characterVoices)
-                MenuItem("Switch relay", Icons.Outlined.SwapHoriz, close, actions::switchRelay)
-                MenuItem("Settings", Icons.Outlined.Settings, close, actions::openSettings)
+                MenuItem(stringResource(R.string.back), Icons.AutoMirrored.Outlined.ArrowBack, close, actions::back)
+                MenuItem(stringResource(R.string.reload), Icons.Outlined.Refresh, close, actions::reload)
+                MenuItem(stringResource(R.string.share_link), Icons.Outlined.Share, close, actions::share)
+                MenuItem(stringResource(R.string.open_in_another_app), Icons.Outlined.OpenInBrowser, close, actions::openInOtherApp)
+                MenuItem(stringResource(R.string.voices_for_this_series), Icons.Outlined.Groups, close, actions::characterVoices)
+                MenuItem(stringResource(R.string.switch_relay), Icons.Outlined.SwapHoriz, close, actions::switchRelay)
+                MenuItem(stringResource(R.string.settings), Icons.Outlined.Settings, close, actions::openSettings)
             }
         }
     }
@@ -191,14 +192,14 @@ private fun BlockedJumpCard(url: String, actions: BrowserActions, modifier: Modi
     ) {
         Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "Blocked a jump to ${Library.hostOf(url)}",
+                stringResource(R.string.blocked_jump, Library.hostOf(url)),
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f).padding(vertical = 12.dp),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             TextButton(onClick = actions::openBlockedJump) {
-                Text("Open", color = MaterialTheme.colorScheme.inversePrimary)
+                Text(stringResource(R.string.open), color = MaterialTheme.colorScheme.inversePrimary)
             }
         }
     }
@@ -247,7 +248,7 @@ private fun IdleBar(ui: UiState, actions: BrowserActions) {
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            ui.status.ifBlank { "Read this chapter aloud" },
+            ui.status.ifBlank { stringResource(R.string.read_this_chapter_aloud) },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 2,
@@ -256,7 +257,7 @@ private fun IdleBar(ui: UiState, actions: BrowserActions) {
         )
         if (ui.status.isNotBlank()) {
             IconButton(onClick = actions::dismissStatus, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Outlined.Close, contentDescription = "Dismiss", modifier = Modifier.size(18.dp))
+                Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.dismiss), modifier = Modifier.size(18.dp))
             }
         }
         Spacer(Modifier.width(6.dp))
@@ -267,7 +268,7 @@ private fun IdleBar(ui: UiState, actions: BrowserActions) {
         ) {
             Icon(Icons.Rounded.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Read aloud", style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.read_aloud), style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -277,14 +278,14 @@ private fun IdleBar(ui: UiState, actions: BrowserActions) {
 private fun NextChapterBar(seconds: Int, actions: BrowserActions) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            "Next chapter in $seconds…",
+            stringResource(R.string.next_chapter_in, seconds),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             modifier = Modifier.weight(1f),
         )
         TextButton(onClick = actions::cancelNext, modifier = Modifier.height(38.dp)) {
-            Text("Cancel", style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.cancel), style = MaterialTheme.typography.labelLarge)
         }
         Spacer(Modifier.width(6.dp))
         Button(
@@ -294,7 +295,7 @@ private fun NextChapterBar(seconds: Int, actions: BrowserActions) {
         ) {
             Icon(Icons.Rounded.SkipNext, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Go now", style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.go_now), style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -309,7 +310,7 @@ private fun PlayingBar(ui: UiState, actions: BrowserActions, centred: Boolean) {
     ) {
         if (!centred) {
             Text(
-                ui.status.ifBlank { "Getting ready…" },
+                ui.status.ifBlank { stringResource(R.string.getting_ready) },
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -324,7 +325,7 @@ private fun PlayingBar(ui: UiState, actions: BrowserActions, centred: Boolean) {
 private fun Controls(ui: UiState, actions: BrowserActions, gap: Dp) {
     val preparing = ui.readerState == ReadAloud.State.PREPARING
     FilledTonalIconButton(onClick = actions::stop, modifier = Modifier.size(36.dp)) {
-        Icon(Icons.Rounded.Stop, contentDescription = "Stop", modifier = Modifier.size(20.dp))
+        Icon(Icons.Rounded.Stop, contentDescription = stringResource(R.string.stop), modifier = Modifier.size(20.dp))
     }
     Spacer(Modifier.width(gap))
     Box(Modifier.size(50.dp), contentAlignment = Alignment.Center) {
@@ -341,9 +342,9 @@ private fun Controls(ui: UiState, actions: BrowserActions, gap: Dp) {
             ),
         ) {
             val (icon, label) = when (ui.readerState) {
-                ReadAloud.State.PREPARING -> Icons.Rounded.Close to "Cancel"
-                ReadAloud.State.READING -> Icons.Rounded.Pause to "Pause"
-                else -> Icons.Rounded.PlayArrow to "Resume"
+                ReadAloud.State.PREPARING -> Icons.Rounded.Close to stringResource(R.string.cancel)
+                ReadAloud.State.READING -> Icons.Rounded.Pause to stringResource(R.string.pause)
+                else -> Icons.Rounded.PlayArrow to stringResource(R.string.resume)
             }
             Icon(icon, contentDescription = label, modifier = Modifier.size(24.dp))
         }
@@ -354,6 +355,6 @@ private fun Controls(ui: UiState, actions: BrowserActions, gap: Dp) {
         enabled = ui.readerState == ReadAloud.State.READING || ui.readerState == ReadAloud.State.PAUSED,
         modifier = Modifier.size(36.dp),
     ) {
-        Icon(Icons.Rounded.SkipNext, contentDescription = "Skip", modifier = Modifier.size(20.dp))
+        Icon(Icons.Rounded.SkipNext, contentDescription = stringResource(R.string.skip), modifier = Modifier.size(20.dp))
     }
 }

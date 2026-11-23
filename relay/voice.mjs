@@ -262,7 +262,6 @@ function fishSound(sound, said, tone) {
     case 'laugh': return `[laughing] ${said}`;
     case 'sob': return `[sobbing] ${said}`;
     case 'pant': return `[panting] ${said}`;
-    case 'grunt': return `[grunting] ${said}`;
     default: return said;
   }
 }
@@ -385,18 +384,23 @@ export function wavSeconds(wav) {
 
 /**
  * The longest a clip of this line should be. Fish sometimes runs on, babbling well past the
- * words (a 41-second clip in testing), so a clip far over this is made again. About 14
- * characters a second at normal speed, with plenty of room for slow, acted lines.
+ * words (a 41-second clip in testing), so a clip far over this is made again. About twice the
+ * line's length at a normal 14 characters a second, plus 2.5 seconds, and never under 4 seconds (a
+ * real laugh or sob takes a moment): "Haa, haa" gets 4 seconds, a 150-character line about 24. Matches Wav.limitSeconds in the app.
  */
 export function fishLimitSeconds(text, speed) {
-  return 6 + (2.5 * text.length) / (14 * speed);
+  return Math.max(4, 2.5 + text.length / (7 * speed));
 }
 
 /** One line from Fish Audio, made again once if it runs far longer than the words need. */
 async function callFishChecked(text, spoken, speed, ref) {
   const limit = fishLimitSeconds(spoken, speed);
   for (let attempt = 1; ; attempt++) {
-    const audio = await callFish(text, speed, ref, attempt > 1 ? 0.5 : undefined);
+    // The retry sends only the words: cues in front of short lines are what set Fish off
+    // ("[grunting] Tsk" once came back as 43 seconds of noise).
+    const audio = attempt > 1
+      ? await callFish(fishWords(spoken) || spoken, speed, ref, 0.5)
+      : await callFish(text, speed, ref);
     const seconds = wavSeconds(audio);
     if (seconds <= limit) return audio;
     console.log(`[${new Date().toLocaleTimeString()}] Fish clip ran on: ${seconds.toFixed(1)}s for ${spoken.length} characters (limit ${limit.toFixed(1)}s), attempt ${attempt}`);
@@ -750,8 +754,8 @@ export async function speak(request) {
       text, tone, speaker, quality, speed: params.speed, cast: cast.id,
       ...(intensity !== 2 && { intensity }),
       ...(model !== 'omnivoice' && { model, speaker, soft, playful }),
-      // fishv: 6 drops clips made before every bracket style (⟨…⟩, 《…》) was taken out of the words.
-      ...(model === 'fish' && { fish: FISH_MODEL, fishv: 6 }),
+      // fishv: 8 drops clips made with a grunt cue ("[grunting] Tsk" could run on for 43 seconds).
+      ...(model === 'fish' && { fish: FISH_MODEL, fishv: 8 }),
       ...(kind && { kind }),
       ...(sound && { sound }),
     }))

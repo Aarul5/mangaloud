@@ -47,6 +47,12 @@ object VoiceText {
         return Split("", "", text)
     }
 
+    /** True when the whole line is a sound a character makes ("Haa, haa", "Kyaa!"), with no words after it. */
+    fun isOnlySound(bubble: Bubble): Boolean {
+        val split = splitSound(plainWords(bubble.text), soundFor(bubble))
+        return split.sound.isNotEmpty() && split.rest.isBlank()
+    }
+
     /** A thought said with feeling ("It's him!") is said aloud, not inwardly. */
     fun isUrgent(tone: String, text: String) = tone in URGENT_TONES || text.trimEnd().endsWith("!")
 
@@ -84,7 +90,8 @@ object VoiceText {
     private fun strength(intensity: Int) = when (intensity) { 1 -> "slightly "; 3 -> "very "; else -> "" }
 
     // Listening tests with Fish: "[coughing] Uh..." sounded like a cough (the word "Cough!" was read
-    // out); the scream cue beat others for "Kyaa!"; a plain "Agh!" beat "[in pain]".
+    // out); the scream cue beat others for "Kyaa!"; a plain "Agh!" beat "[in pain]". A grunt stays
+    // plain: "[grunting] Tsk" once came back as 43 seconds of noise, while "Tsk." takes half a second.
     private fun fishSound(sound: String, said: String, tone: String) = when (sound) {
         "cough" -> "[coughing] Uh..."
         "shriek" -> "[screaming] $said"
@@ -94,7 +101,6 @@ object VoiceText {
         "laugh" -> "[laughing] $said"
         "sob" -> "[sobbing] $said"
         "pant" -> "[panting] $said"
-        "grunt" -> "[grunting] $said"
         else -> said
     }
 

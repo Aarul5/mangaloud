@@ -20,6 +20,9 @@ interface ClipVoice {
     /** True for a while after it could not be reached, so lines go to the phone voice at once. */
     val isUnreachable: Boolean
 
+    /** A short note on the last clip, such as how long it took, or null. */
+    val lastDetails: String? get() = null
+
     fun prefetch(bubble: Bubble)
 
     /** The clip when it is ready, or null while it is on the way. Throws if making it failed. */
@@ -43,8 +46,8 @@ class CloudVoice(
     private val key = setup.key(tts.provider)
     private val model = setup.model(tts.provider)
     private val dir = File(context.cacheDir, "cloud-voice").apply { mkdirs() }
-    // Two at a time: a little ahead without tripping the services' rate limits.
-    private val executor = Executors.newFixedThreadPool(2) { r -> Thread(r, "cloud-voice").apply { isDaemon = true } }
+    // Three at a time: well ahead of the voice, under Fish's limit of five at once.
+    private val executor = Executors.newFixedThreadPool(3) { r -> Thread(r, "cloud-voice").apply { isDaemon = true } }
     private val jobs = ConcurrentHashMap<String, Future<File>>()
 
     @Volatile
@@ -58,6 +61,11 @@ class CloudVoice(
     private var defaults: Future<*>? = null
 
     override val name get() = tts.provider.label
+
+    /** How long the last clip took to make, for the details line under the reading bar. */
+    @Volatile
+    override var lastDetails: String? = null
+        private set
 
     override val isUnreachable: Boolean
         get() = unreachableAt != 0L && SystemClock.elapsedRealtime() - unreachableAt < RETRY_AFTER_MS
@@ -139,19 +147,33 @@ class CloudVoice(
 
     /**
      * A clip far longer than its line is the voice wandering into noise or a stuck loop (it once
-     * made 41 seconds for a three-word game window). Try once more, steadier; if that runs away
-     * too, fail so the phone voice reads the line.
+     * made 41 seconds for a three-word game window). Try once more, steadier (for Fish, the plain
+     * words with no cues); if that runs away too, fail so the phone voice reads the line.
      */
     private fun speakChecked(bubble: Bubble, voice: VoicePick): Pair<ByteArray, String> {
         val limit = Wav.limitSeconds(bubble.text, speed)
-        val first = tts.speak(key, model, voice, bubble, speed)
-        val firstSeconds = Wav.seconds(first.first, first.second)
-        if (firstSeconds <= limit) return first
-        Log.w(TAG, "${tts.provider.label} made ${"%.0f".format(firstSeconds)}s for a ${bubble.text.length}-character line; trying again")
-        val again = tts.speak(key, model, voice, bubble, speed, steady = true)
-        val againSeconds = Wav.seconds(again.first, again.second)
-        if (againSeconds <= limit) return again
-        throw VoiceServiceException(0, "${tts.provider.label} made a ${"%.0f".format(againSeconds)}s clip for a short line")
+        val started = SystemClock.elapsedRealtime()
+        // A runaway clip is stopped as soon as it passes the limit, instead of waiting for all of
+        // it to arrive while the next lines queue behind it.
+        val first = try {
+            tts.speak(key, model, voice, bubble, speed, maxSeconds = limit)
+        } catch (e: ClipTooLong) {
+            null
+        }
+        if (first != null && Wav.seconds(first.first, first.second) <= limit) return timed(first, started)
+        Log.w(TAG, "${tts.provider.label} ran on past ${"%.0f".format(limit)}s for a ${bubble.text.length}-character line; trying again")
+        val again = try {
+            tts.speak(key, model, voice, bubble, speed, steady = true, maxSeconds = limit)
+        } catch (e: ClipTooLong) {
+            null
+        }
+        if (again != null && Wav.seconds(again.first, again.second) <= limit) return timed(again, started)
+        throw VoiceServiceException(0, "${tts.provider.label} kept running on past the line")
+    }
+
+    private fun timed(clip: Pair<ByteArray, String>, started: Long): Pair<ByteArray, String> {
+        lastDetails = "Voice: ${"%.1f".format((SystemClock.elapsedRealtime() - started) / 1000.0)}s"
+        return clip
     }
 
     private fun keyOf(bubble: Bubble, voice: VoicePick): String {
@@ -174,7 +196,7 @@ class CloudVoice(
         private const val TAG = "CloudVoice"
         private const val RETRY_AFTER_MS = 30_000L
         /** Bumped when the text sent to cloud voices changes, so clips made the old way are made again. */
-        private const val CLIP_VERSION = 2
+        private const val CLIP_VERSION = 4
         private const val MAX_CLIPS = 800
         private const val KEEP_CLIPS = 600
     }
